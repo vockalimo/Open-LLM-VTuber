@@ -32,11 +32,45 @@ RUN uv pip install \
 COPY . /app
 RUN uv pip install --no-deps .
 
-# 注入 WebSocket URL 自動偵測腳本，讓部署在反代後面時能正確連線
+# 修補 frontend，讓部署在 reverse proxy 後面時 URL 正確
+# 策略：
+#   - DEFAULT_BASE_URL="" → 背景圖用相對路徑，local & GCP 都能跑
+#   - DEFAULT_WS_URL → 根據 location.protocol/host 動態決定
+#   - i18nextLng 預設 zh
+#   - index.html 注入 localStorage 覆寫腳本（應對舊快取）
 RUN python3 - <<'PYEOF'
 import re
-path = "/app/frontend/index.html"
-content = open(path, encoding="utf-8").read()
+
+# 1. 修補 compiled JS bundle
+js_path = "/app/frontend/assets/main-nu7uwxNJ.js"
+try:
+    js = open(js_path, encoding="utf-8").read()
+    changed = False
+
+    # DEFAULT_BASE_URL="" → 背景圖改為相對路徑
+    old_base = 'DEFAULT_BASE_URL="http://127.0.0.1:12393"'
+    if old_base in js:
+        js = js.replace(old_base, 'DEFAULT_BASE_URL=""')
+        changed = True
+
+    # DEFAULT_WS_URL → 動態偵測 host
+    old_ws = 'DEFAULT_WS_URL="ws://127.0.0.1:12393/client-ws"'
+    new_ws = 'DEFAULT_WS_URL=(location.protocol==="https:"?"wss:":"ws:")+"//"+location.host+"/client-ws"'
+    if old_ws in js:
+        js = js.replace(old_ws, new_ws)
+        changed = True
+
+    if changed:
+        open(js_path, "w", encoding="utf-8").write(js)
+        print("main.js patched OK")
+    else:
+        print("main.js already patched or pattern not found")
+except FileNotFoundError:
+    print(f"WARNING: {js_path} not found, skipping JS patch")
+
+# 2. 注入 localStorage 修正腳本到 index.html（處理舊值快取）
+html_path = "/app/frontend/index.html"
+html = open(html_path, encoding="utf-8").read()
 inject = (
     '    <script>(function(){'
     'var p=location.protocol==="https:"?"wss:":"ws:",h=location.host;'
@@ -45,13 +79,14 @@ inject = (
     'if(typeof x==="string"&&x.indexOf("127.0.0.1")===-1&&x.indexOf("localhost")===-1)ok=true;'
     '}catch(e){}}if(!ok)localStorage.setItem(k,JSON.stringify(v));}'
     'fix("wsUrl",p+"//"+h+"/client-ws");'
-    'fix("baseUrl",location.protocol+"//"+h);'
+    'fix("baseUrl","");'  # 空字串 → 相對路徑
+    'if(!localStorage.getItem("i18nextLng"))localStorage.setItem("i18nextLng","zh");'
     '})();</script>\n'
 )
 marker = '    <script type="module" crossorigin'
-if "localStorage.setItem" not in content:
-    content = content.replace(marker, inject + marker)
-    open(path, "w", encoding="utf-8").write(content)
+if "localStorage.setItem" not in html:
+    html = html.replace(marker, inject + marker)
+    open(html_path, "w", encoding="utf-8").write(html)
     print("index.html patched OK")
 else:
     print("index.html already patched")
