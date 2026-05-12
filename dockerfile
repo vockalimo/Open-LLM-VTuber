@@ -18,22 +18,47 @@ RUN apt-get update -o Acquire::Retries=5 \
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-# Install deps (cache-friendly)
+# Install deps (cache-friendly)，排除 torch 避免裝 CUDA 版
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --no-install-package torch --no-install-package torchaudio
+
+# 直接裝 CPU 版 torch（不裝 CUDA，省 ~8GB）
+RUN uv pip install \
+      torch torchaudio \
+      --index-url https://download.pytorch.org/whl/cpu
 
 # Copy source & install project
 COPY . /app
 RUN uv pip install --no-deps .
 
+# 注入 WebSocket URL 自動偵測腳本，讓部署在反代後面時能正確連線
+RUN python3 - <<'PYEOF'
+import re
+path = "/app/frontend/index.html"
+content = open(path, encoding="utf-8").read()
+inject = (
+    '    <script>(function(){'
+    'var p=location.protocol==="https:"?"wss:":"ws:",h=location.host;'
+    'function fix(k,v){var r=localStorage.getItem(k),ok=false;'
+    'if(r){try{var x=JSON.parse(r);'
+    'if(typeof x==="string"&&x.indexOf("127.0.0.1")===-1&&x.indexOf("localhost")===-1)ok=true;'
+    '}catch(e){}}if(!ok)localStorage.setItem(k,JSON.stringify(v));}'
+    'fix("wsUrl",p+"//"+h+"/client-ws");'
+    'fix("baseUrl",location.protocol+"//"+h);'
+    '})();</script>\n'
+)
+marker = '    <script type="module" crossorigin'
+if "localStorage.setItem" not in content:
+    content = content.replace(marker, inject + marker)
+    open(path, "w", encoding="utf-8").write(content)
+    print("index.html patched OK")
+else:
+    print("index.html already patched")
+PYEOF
+
 # 補裝 host venv 有、但沒進 uv.lock 的套件
 RUN uv pip install silero-vad
-
-# uv.lock 預設裝 CUDA 版 torch（需要 libcudart）；雲端 VM 沒 GPU，改裝 CPU 版
-RUN uv pip install --reinstall \
-      torch torchaudio \
-      --index-url https://download.pytorch.org/whl/cpu
 
 # Startup script
 RUN printf '%s\n' \
