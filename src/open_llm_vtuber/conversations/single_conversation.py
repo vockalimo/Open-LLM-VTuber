@@ -97,7 +97,14 @@ async def process_single_conversation(
                     # Handle tool status event: send WebSocket message
                     output_item["name"] = context.character_config.character_name
                     logger.debug(f"Sending tool status update: {output_item}")
+                    await websocket_send(json.dumps(output_item))
 
+                elif (
+                    isinstance(output_item, dict)
+                    and output_item.get("type") in ("set-background", "game-progress")
+                ):
+                    # 🎮 遊戲引擎事件：直接透過 WebSocket 送給前端
+                    logger.info(f"🖼️ Sending game WS event to frontend: {output_item}")
                     await websocket_send(json.dumps(output_item))
 
                 elif isinstance(output_item, (SentenceOutput, AudioOutput)):

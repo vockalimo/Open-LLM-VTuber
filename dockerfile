@@ -27,6 +27,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY . /app
 RUN uv pip install --no-deps .
 
+# 補裝 host venv 有、但沒進 uv.lock 的套件
+RUN uv pip install silero-vad
+
+# uv.lock 預設裝 CUDA 版 torch（需要 libcudart）；雲端 VM 沒 GPU，改裝 CPU 版
+RUN uv pip install --reinstall \
+      torch torchaudio \
+      --index-url https://download.pytorch.org/whl/cpu
+
 # Startup script
 RUN printf '%s\n' \
   '#!/usr/bin/env sh' \
@@ -37,7 +45,8 @@ RUN printf '%s\n' \
   '# 1) conf.yaml (required)' \
   'if [ -f "/app/conf/conf.yaml" ]; then' \
   '  echo "Using user-provided conf.yaml"' \
-  '  ln -sf /app/conf/conf.yaml /app/conf.yaml' \
+  '  # 容器內必須監聽 0.0.0.0 才能被 Caddy reverse_proxy 看到' \
+  '  sed "s/^  host:.*/  host: '"'"'0.0.0.0'"'"'/" /app/conf/conf.yaml > /app/conf.yaml' \
   'else' \
   '  echo "ERROR: conf.yaml is required."' \
   '  echo "Please mount your config dir to /app/conf"' \

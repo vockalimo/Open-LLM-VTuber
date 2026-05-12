@@ -10,6 +10,7 @@ from loguru import logger
 from .service_context import ServiceContext
 from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
+from ._device_ctx import set_active_device_id, extract_device_id_from_ws
 
 
 def init_client_ws_route(default_context_cache: ServiceContext) -> APIRouter:
@@ -31,6 +32,11 @@ def init_client_ws_route(default_context_cache: ServiceContext) -> APIRouter:
         """WebSocket endpoint for client connections"""
         await websocket.accept()
         client_uid = str(uuid4())
+        # 設定本 task 的作用中學生 device_id（供後續 metric helper 使用）
+        device_id = extract_device_id_from_ws(websocket)
+        if device_id:
+            set_active_device_id(device_id)
+            logger.info(f"[device_ctx] ws {client_uid} 綁定學生 device_id={device_id}")
 
         try:
             await ws_handler.handle_new_connection(websocket, client_uid)

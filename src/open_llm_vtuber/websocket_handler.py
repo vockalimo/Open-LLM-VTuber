@@ -374,6 +374,9 @@ class WebSocketHandler:
         context = self.client_contexts[client_uid]
         group = self.chat_group_manager.get_client_group(client_uid)
 
+        # 🧠 vtuber-brain：emit barge_in.signal（前端 VAD 偵測到 speech）
+        self._vtuber_brain_emit_barge_in_signal(heard_response)
+
         if group and len(group.members) > 1:
             await handle_group_interrupt(
                 group_id=group.group_id,
@@ -610,3 +613,43 @@ class WebSocketHandler:
             await websocket.send_json({"type": "heartbeat-ack"})
         except Exception as e:
             logger.error(f"Error sending heartbeat acknowledgment: {e}")
+
+    # ------------------------------------------------------------------
+    # 🧠 vtuber-brain helper
+    # ------------------------------------------------------------------
+    def _vtuber_brain_emit_barge_in_signal(self, heard_response: str) -> None:
+        """前端送 interrupt-signal 時 emit 一筆 metrics（不影響原 cancel 流程）。
+
+        實際是否誤殺，由稍後 ASR 文字進到 process_user_input 時分類決定。
+        """
+        import os as _os
+        from ._device_ctx import get_active_device_id
+        device_id = get_active_device_id()
+        if not device_id:
+            return
+        try:
+            import importlib.util as _ilu
+            import sys as _sys
+            if "vtuber_brain" in _sys.modules:
+                vb = _sys.modules["vtuber_brain"]
+            else:
+                vb_path = _os.environ.get("VTUBER_POC_PATH")
+                if not vb_path:
+                    return
+                init_py = _os.path.join(
+                    vb_path, "src", "vtuber_brain", "__init__.py"
+                )
+                if not _os.path.exists(init_py):
+                    return
+                spec = _ilu.spec_from_file_location("vtuber_brain", init_py)
+                vb = _ilu.module_from_spec(spec)  # type: ignore[arg-type]
+                assert spec and spec.loader
+                spec.loader.exec_module(vb)  # type: ignore[union-attr]
+                _sys.modules["vtuber_brain"] = vb
+            vb.emit_event(
+                "barge_in.signal",
+                device_id=device_id,
+                fields={"heard_len": len(heard_response or "")},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[vtuber-brain] emit barge_in.signal failed: {e}")

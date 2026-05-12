@@ -6,6 +6,7 @@ from .agents.basic_memory_agent import BasicMemoryAgent
 from .stateless_llm_factory import LLMFactory as StatelessLLMFactory
 from .agents.hume_ai import HumeAIAgent
 from .agents.letta_agent import LettaAgent
+from .agents.scenario_agent import ScenarioAgent
 
 from ..mcpp.tool_manager import ToolManager
 from ..mcpp.tool_executor import ToolExecutor
@@ -126,6 +127,21 @@ class AgentFactory:
                 segment_method=settings.get("segment_method"),
                 host=settings.get("host"),
                 port=settings.get("port"),
+            )
+
+        elif conversation_agent_choice == "scenario_agent":
+            import os
+            settings = agent_settings.get("scenario_agent", {}) or {}
+            # 環境變數可覆寫 conf.yaml（部署時用 docker compose 注入）
+            api_url = os.environ.get(
+                "SCENARIO_API_URL",
+                settings.get("scenario_api_url", "http://127.0.0.1:8765"),
+            )
+            return ScenarioAgent(
+                scenario_api_url=api_url,
+                scenario_id=settings.get("scenario_id", "inn-bullying-01"),
+                speaker_name=settings.get("speaker_name", "雷無桒"),
+                request_timeout=float(settings.get("request_timeout", 60.0)),
             )
 
         else:

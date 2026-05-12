@@ -172,6 +172,33 @@ class LettaConfig(I18nMixin, BaseModel):
     }
 
 
+class ScenarioAgentConfig(I18nMixin, BaseModel):
+    """Configuration for the scenario agent (driven by external scenario API)."""
+
+    scenario_api_url: str = Field(
+        "http://127.0.0.1:8765", alias="scenario_api_url"
+    )
+    scenario_id: str = Field(..., alias="scenario_id")
+    speaker_name: str = Field("AI", alias="speaker_name")
+    request_timeout: float = Field(60.0, alias="request_timeout")
+
+    DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
+        "scenario_api_url": Description(
+            en="Base URL of the scenario engine HTTP API",
+            zh="劇情引擎 HTTP API 的根網址",
+        ),
+        "scenario_id": Description(
+            en="Scenario ID to load", zh="要載入的劇本 ID"
+        ),
+        "speaker_name": Description(
+            en="Display name of the speaker", zh="說書人顯示名稱"
+        ),
+        "request_timeout": Description(
+            en="HTTP request timeout in seconds", zh="HTTP 請求逾時秒數"
+        ),
+    }
+
+
 class AgentSettings(I18nMixin, BaseModel):
     """Settings for different types of agents."""
 
@@ -181,6 +208,9 @@ class AgentSettings(I18nMixin, BaseModel):
     mem0_agent: Optional[Mem0Config] = Field(None, alias="mem0_agent")
     hume_ai_agent: Optional[HumeAIConfig] = Field(None, alias="hume_ai_agent")
     letta_agent: Optional[LettaConfig] = Field(None, alias="letta_agent")
+    scenario_agent: Optional[ScenarioAgentConfig] = Field(
+        None, alias="scenario_agent"
+    )
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "basic_memory_agent": Description(
@@ -193,6 +223,9 @@ class AgentSettings(I18nMixin, BaseModel):
         "letta_agent": Description(
             en="Configuration for Letta agent", zh="Letta 代理配置"
         ),
+        "scenario_agent": Description(
+            en="Configuration for scenario agent", zh="劇情代理配置"
+        ),
     }
 
 
@@ -200,7 +233,11 @@ class AgentConfig(I18nMixin, BaseModel):
     """This class contains all of the configurations related to agent."""
 
     conversation_agent_choice: Literal[
-        "basic_memory_agent", "mem0_agent", "hume_ai_agent", "letta_agent"
+        "basic_memory_agent",
+        "mem0_agent",
+        "hume_ai_agent",
+        "letta_agent",
+        "scenario_agent",
     ] = Field(..., alias="conversation_agent_choice")
     agent_settings: AgentSettings = Field(..., alias="agent_settings")
     llm_configs: StatelessLLMConfigs = Field(..., alias="llm_configs")

@@ -4,6 +4,11 @@ from typing import Optional, Union, Any, List, Dict
 import numpy as np
 import json
 from loguru import logger
+try:
+    from zhconv import convert as _zh_convert
+    _HAS_ZHCONV = True
+except ImportError:
+    _HAS_ZHCONV = False
 
 from ..message_handler import message_handler
 from .types import WebSocketSend, BroadcastContext
@@ -152,11 +157,73 @@ async def process_user_input(
     if isinstance(user_input, np.ndarray):
         logger.info("Transcribing audio input...")
         input_text = await asr_engine.async_transcribe_np(user_input)
+        # 🔄 自動將 ASR 簡體輸出轉成繁體中文
+        if _HAS_ZHCONV and input_text:
+            input_text = _zh_convert(input_text, 'zh-tw')
         await websocket_send(
             json.dumps({"type": "user-input-transcription", "text": input_text})
         )
+        # 🧠 vtuber-brain：分類使用者一句話 + 寫入 metrics
+        _vtuber_brain_classify_and_emit(input_text)
         return input_text
+    # 文字輸入也跑一次分類
+    _vtuber_brain_classify_and_emit(user_input if isinstance(user_input, str) else "")
     return user_input
+
+
+def _vtuber_brain_classify_and_emit(text: str) -> None:
+    """把使用者一句話送到 vtuber-poc 分類 + emit metrics。
+
+    安靜失敗（缺套件、缺環境變數、寫入失敗都不影響主流程）。
+    對應 metrics：
+      - vtuber.user_utterance       (含 cls 欄位)
+      - barge_in.cancel  (interrupt / content)
+      - barge_in.resume  (backchannel)
+    """
+    import os as _os
+    from .._device_ctx import get_active_device_id
+    device_id = get_active_device_id()
+    if not device_id:
+        return
+    try:
+        import importlib.util as _ilu
+        import sys as _sys
+        if "vtuber_brain" in _sys.modules:
+            vb = _sys.modules["vtuber_brain"]
+        else:
+            vb_path = _os.environ.get("VTUBER_POC_PATH")
+            if not vb_path:
+                return
+            init_py = _os.path.join(vb_path, "src", "vtuber_brain", "__init__.py")
+            if not _os.path.exists(init_py):
+                return
+            spec = _ilu.spec_from_file_location("vtuber_brain", init_py)
+            vb = _ilu.module_from_spec(spec)  # type: ignore[arg-type]
+            assert spec and spec.loader
+            spec.loader.exec_module(vb)  # type: ignore[union-attr]
+            _sys.modules["vtuber_brain"] = vb
+
+        cls = vb.classify_utterance(text or "")
+        vb.emit_event(
+            "vtuber.user_utterance",
+            device_id=device_id,
+            fields={"cls": cls, "text": text or "", "len": len(text or "")},
+        )
+        if cls == "backchannel":
+            vb.emit_event(
+                "barge_in.resume",
+                device_id=device_id,
+                fields={"reason": "backchannel", "text": text or ""},
+            )
+        elif cls in ("interrupt", "content"):
+            vb.emit_event(
+                "barge_in.cancel",
+                device_id=device_id,
+                fields={"reason": cls, "text": text or ""},
+            )
+        logger.info(f"[vtuber-brain] utterance classified as {cls!r}: {text[:40]!r}")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[vtuber-brain] classify failed: {e}")
 
 
 async def finalize_conversation_turn(

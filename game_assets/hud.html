@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<title>🎮 蘇格拉底密室逃脫 — HUD</title>
+<style>
+  :root {
+    --bg: #0b0f1a;
+    --panel: rgba(20, 26, 42, 0.92);
+    --line: rgba(255, 255, 255, 0.08);
+    --text: #e8ecf4;
+    --muted: #8a93a8;
+    --accent: #6ea8ff;
+    --good: #3ddc97;
+    --warn: #ffb454;
+    --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+    background: radial-gradient(ellipse at top, #1a2340 0%, var(--bg) 60%);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 {
+    font-size: 18px;
+    margin: 0 0 12px;
+    color: var(--muted);
+    letter-spacing: 2px;
+    font-weight: 500;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 16px;
+    backdrop-filter: blur(8px);
+  }
+  .stage-title {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 0 0 4px;
+  }
+  .stage-sub { color: var(--muted); font-size: 14px; margin-bottom: 18px; }
+
+  /* 關卡進度球 */
+  .stages { display: flex; gap: 8px; margin-bottom: 24px; }
+  .stage-dot {
+    flex: 1;
+    height: 8px;
+    border-radius: 99px;
+    background: rgba(255,255,255,0.08);
+    transition: all 0.4s;
+  }
+  .stage-dot.done { background: var(--good); }
+  .stage-dot.current {
+    background: linear-gradient(90deg, var(--accent), #b388ff);
+    box-shadow: 0 0 12px rgba(110, 168, 255, 0.6);
+  }
+
+  /* 雙進度條 */
+  .meter { margin-bottom: 16px; }
+  .meter-label {
+    display: flex; justify-content: space-between;
+    font-size: 13px; color: var(--muted); margin-bottom: 6px;
+  }
+  .meter-label b { color: var(--text); font-weight: 600; }
+  .bar {
+    height: 10px; border-radius: 99px;
+    background: rgba(255,255,255,0.06);
+    overflow: hidden; position: relative;
+  }
+  .bar > .fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #b388ff);
+    transition: width 0.5s cubic-bezier(.2,.9,.3,1);
+    border-radius: 99px;
+  }
+  .bar.full > .fill { background: linear-gradient(90deg, var(--good), #6effb4); }
+
+  /* 關鍵字 chips */
+  .kw-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip {
+    padding: 4px 10px;
+    border-radius: 99px;
+    font-size: 12px;
+    background: rgba(110, 168, 255, 0.15);
+    border: 1px solid rgba(110, 168, 255, 0.4);
+    color: var(--accent);
+  }
+
+  /* hint banner */
+  .hint {
+    display: none;
+    background: linear-gradient(90deg, rgba(255,180,84,0.2), rgba(255,180,84,0.05));
+    border: 1px solid rgba(255,180,84,0.5);
+    color: var(--warn);
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+  .hint.show { display: flex; align-items: center; gap: 10px; animation: pulse 1.5s infinite; }
+  .hint .icon { font-size: 20px; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,180,84,0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(255,180,84,0); }
+  }
+
+  .footer {
+    text-align: center; color: var(--muted); font-size: 12px;
+    margin-top: 12px;
+  }
+  .footer code { color: var(--accent); }
+
+  /* idle */
+  .idle .panel { opacity: 0.5; }
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap">
+  <h1>SOCRATIC ESCAPE · LIVE HUD</h1>
+
+  <div class="hint" id="hint">
+    <span class="icon">⚠️</span>
+    <span>玩家似乎卡關了，AI 正在切換為更具體的引導…</span>
+  </div>
+
+  <div class="panel">
+    <div class="stage-title" id="stageName">尚未開始</div>
+    <div class="stage-sub" id="stageSub">說出「開始遊戲」或「密室逃脫」即可啟動</div>
+
+    <div class="stages" id="stages"></div>
+
+    <div class="meter">
+      <div class="meter-label">
+        <span>對話輪數</span>
+        <span><b id="turnsNow">0</b> / <span id="turnsMin">3</span></span>
+      </div>
+      <div class="bar" id="turnsBar"><div class="fill" style="width:0%"></div></div>
+    </div>
+
+    <div class="meter">
+      <div class="meter-label">
+        <span>命中關鍵字</span>
+        <span><b id="kwNow">0</b> / <span id="kwMin">2</span></span>
+      </div>
+      <div class="bar" id="kwBar"><div class="fill" style="width:0%"></div></div>
+      <div class="kw-row" id="kwList"></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    來源：<code>/api/game/status</code> · 每 1 秒輪詢
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const TOTAL_FALLBACK = 4;
+
+  function renderStageDots(current, total, completed) {
+    const el = $("stages");
+    el.innerHTML = "";
+    for (let i = 1; i <= total; i++) {
+      const d = document.createElement("div");
+      d.className = "stage-dot";
+      if (completed) d.classList.add("done");
+      else if (i < current) d.classList.add("done");
+      else if (i === current) d.classList.add("current");
+      el.appendChild(d);
+    }
+  }
+
+  function setBar(barEl, pct, full) {
+    barEl.querySelector(".fill").style.width = Math.min(100, Math.max(0, pct)) + "%";
+    barEl.classList.toggle("full", !!full);
+  }
+
+  function render(p) {
+    if (!p || !p.available) {
+      $("stageName").textContent = "（伺服器未提供遊戲狀態）";
+      return;
+    }
+    $("stageName").textContent = p.completed
+      ? "🎓 全部通關"
+      : (p.active ? `第 ${p.stage} 關 · ${p.stage_name}` : "尚未開始");
+    $("stageSub").textContent = p.completed
+      ? "玩家已完成所有關卡 — 可以鼓掌了 👏"
+      : (p.active ? `本關目標：累積 ${p.min_turns} 輪對話 + 命中 ${p.min_hit} 個關鍵字`
+                  : "說出「開始遊戲」或「密室逃脫」即可啟動");
+
+    const total = p.total_stages || TOTAL_FALLBACK;
+    renderStageDots(p.stage || 0, total, p.completed);
+
+    const turns = p.turns || 0;
+    const turnsMin = p.min_turns || 3;
+    $("turnsNow").textContent = turns;
+    $("turnsMin").textContent = turnsMin;
+    setBar($("turnsBar"), (turns / turnsMin) * 100, turns >= turnsMin);
+
+    const hits = (p.hit_keywords || []).length;
+    const kwMin = p.min_hit || 2;
+    $("kwNow").textContent = hits;
+    $("kwMin").textContent = kwMin;
+    setBar($("kwBar"), (hits / kwMin) * 100, hits >= kwMin);
+
+    const list = $("kwList");
+    list.innerHTML = "";
+    (p.hit_keywords || []).forEach(k => {
+      const c = document.createElement("span");
+      c.className = "chip";
+      c.textContent = "✓ " + k;
+      list.appendChild(c);
+    });
+
+    $("hint").classList.toggle("show", !!p.hint_triggered);
+    document.body.classList.toggle("idle", !p.active && !p.completed);
+  }
+
+  async function tick() {
+    try {
+      const r = await fetch("/api/game/status", { cache: "no-store" });
+      const p = await r.json();
+      render(p);
+    } catch (e) {
+      console.warn("status fetch failed", e);
+    }
+  }
+  tick();
+  setInterval(tick, 1000);
+</script>
+</body>
+</html>

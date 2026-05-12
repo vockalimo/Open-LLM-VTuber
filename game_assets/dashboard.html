@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<title>🎓 蘇格拉底密室逃脫 — 對話後台</title>
+<style>
+  :root {
+    --bg: #0b0f1a;
+    --panel: #141a2a;
+    --panel-hover: #1a2238;
+    --line: rgba(255, 255, 255, 0.08);
+    --text: #e8ecf4;
+    --muted: #8a93a8;
+    --accent: #6ea8ff;
+    --good: #3ddc97;
+    --warn: #ffb454;
+    --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 14px 24px;
+    background: linear-gradient(90deg, #1a2340, #0b0f1a);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { margin: 0; font-size: 16px; letter-spacing: 1px; color: var(--muted); font-weight: 500; }
+  header .right { font-size: 12px; color: var(--muted); }
+  header code { color: var(--accent); }
+
+  main { flex: 1; display: grid; grid-template-columns: 360px 1fr; min-height: 0; }
+
+  /* 左：session 列表 */
+  aside {
+    border-right: 1px solid var(--line);
+    overflow-y: auto;
+    background: #0d1322;
+  }
+  .session-card {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .session-card:hover { background: var(--panel-hover); }
+  .session-card.active { background: var(--panel-hover); border-left: 3px solid var(--accent); padding-left: 15px; }
+  .session-card .id { font-size: 12px; color: var(--muted); font-family: ui-monospace, monospace; }
+  .session-card .row { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
+  .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 99px;
+    background: rgba(110, 168, 255, 0.18); color: var(--accent);
+    border: 1px solid rgba(110, 168, 255, 0.3);
+  }
+  .badge.good { background: rgba(61, 220, 151, 0.18); color: var(--good); border-color: rgba(61, 220, 151, 0.3); }
+  .badge.warn { background: rgba(255, 180, 84, 0.18); color: var(--warn); border-color: rgba(255, 180, 84, 0.3); }
+  .badge.bad  { background: rgba(255, 107, 107, 0.18); color: var(--bad);  border-color: rgba(255, 107, 107, 0.3); }
+
+  /* 右：詳細 */
+  section { overflow-y: auto; padding: 24px 32px; }
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .stat {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px;
+  }
+  .stat .k { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+  .stat .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
+
+  .keywords { margin-bottom: 24px; }
+  .keywords .label { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .chip {
+    display: inline-block;
+    padding: 4px 10px; margin: 0 4px 4px 0;
+    border-radius: 99px; font-size: 12px;
+    background: rgba(110, 168, 255, 0.15);
+    border: 1px solid rgba(110, 168, 255, 0.4);
+    color: var(--accent);
+  }
+
+  /* 對話流 */
+  .timeline { display: flex; flex-direction: column; gap: 12px; }
+  .ev { display: flex; gap: 10px; }
+  .ev .ts { font-size: 11px; color: var(--muted); width: 60px; flex-shrink: 0; padding-top: 4px; font-family: ui-monospace, monospace; }
+  .ev .body { flex: 1; }
+  .bubble {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 10px 14px;
+    line-height: 1.55; font-size: 14px;
+    white-space: pre-wrap;
+  }
+  .ev.user .bubble { background: linear-gradient(135deg, rgba(110,168,255,0.18), rgba(110,168,255,0.05)); border-color: rgba(110,168,255,0.3); }
+  .ev.assistant .bubble { background: var(--panel); }
+  .ev.system .bubble { background: rgba(255,180,84,0.1); border-color: rgba(255,180,84,0.3); color: var(--warn); font-size: 13px; }
+  .ev .who { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .ev.user .who { color: var(--accent); }
+  .progress-mini {
+    display: inline-flex; gap: 6px; margin-top: 6px;
+    font-size: 11px; color: var(--muted);
+  }
+  .progress-mini b { color: var(--text); }
+
+  .empty { color: var(--muted); padding: 60px 20px; text-align: center; font-size: 14px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── 能力報告 ── */
+  .report-toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 16px; margin: 0 0 16px;
+    background: linear-gradient(135deg, #6ea8ff, #b388ff);
+    color: white; border: none; border-radius: 8px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .report-toggle:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(110,168,255,0.4); }
+  .report {
+    background: linear-gradient(180deg, rgba(110,168,255,0.06), transparent);
+    border: 1px solid rgba(110,168,255,0.25);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+  .report h3 {
+    margin: 0 0 4px; font-size: 20px;
+    background: linear-gradient(90deg, #6ea8ff, #b388ff);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .report .subtitle { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+  .overall {
+    display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px;
+  }
+  .overall .num { font-size: 42px; font-weight: 700; color: var(--accent); }
+  .overall .max { color: var(--muted); font-size: 14px; }
+  .ability {
+    display: grid; grid-template-columns: 140px 1fr 100px; gap: 12px;
+    align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line);
+  }
+  .ability:last-child { border-bottom: none; }
+  .ability .name b { font-size: 14px; }
+  .ability .name .desc { font-size: 11px; color: var(--muted); margin-top: 2px; display: block; }
+  .stars { font-size: 16px; letter-spacing: 2px; }
+  .stars .on { color: var(--warn); }
+  .stars .off { color: rgba(255,255,255,0.15); }
+  .lvl-badge { padding: 3px 10px; border-radius: 99px; font-size: 11px; text-align: center; }
+  .lvl-badge.good { background: rgba(61,220,151,0.18); color: var(--good); border: 1px solid rgba(61,220,151,0.3); }
+  .lvl-badge.warn { background: rgba(255,180,84,0.18); color: var(--warn); border: 1px solid rgba(255,180,84,0.3); }
+  .lvl-badge.bad  { background: rgba(255,107,107,0.18); color: var(--bad);  border: 1px solid rgba(255,107,107,0.3); }
+  .ability .rule { grid-column: 2/4; font-size: 11px; color: var(--muted); margin-top: 4px; padding-left: 0; }
+  .ability .evid { grid-column: 2/4; font-size: 12px; margin-top: 6px; padding-left: 8px; border-left: 2px solid rgba(110,168,255,0.4); color: var(--text); }
+  .suggestions { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .suggestions h4 { margin: 0 0 10px; font-size: 13px; color: var(--muted); letter-spacing: 1px; }
+  .sug-item { padding: 10px 14px; background: var(--panel); border-radius: 10px; margin-bottom: 8px; font-size: 13px; }
+  .sug-item b { color: var(--warn); }
+  .refs { margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--line); font-size: 11px; color: var(--muted); }
+  .refs span { display: inline-block; padding: 2px 8px; margin: 0 4px 4px 0; background: rgba(255,255,255,0.04); border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SOCRATIC ESCAPE · 對話後台</h1>
+  <div class="right">
+    <a href="/game/hud.html" target="_blank">🎮 HUD</a> &nbsp;·&nbsp;
+    <a href="/" target="_blank">主畫面</a> &nbsp;·&nbsp;
+    來源 <code>/api/sessions</code>
+  </div>
+</header>
+
+<main>
+  <aside id="list"><div class="empty">載入中…</div></aside>
+  <section id="detail"><div class="empty">← 從左側選一場對話</div></section>
+</main>
+
+<script>
+  const $list = document.getElementById("list");
+  const $detail = document.getElementById("detail");
+  let activeId = null;
+
+  function fmtDuration(s) {
+    if (!s) return "0s";
+    if (s < 60) return s.toFixed(0) + "s";
+    const m = Math.floor(s / 60);
+    const r = Math.round(s % 60);
+    return `${m}m${r}s`;
+  }
+
+  function fmtTime(ts, base) {
+    if (!ts) return "";
+    const d = (ts - (base || ts));
+    return d.toFixed(1) + "s";
+  }
+
+  function sessionBadge(s) {
+    if (s.completed) return '<span class="badge good">🎓 全破</span>';
+    if (s.max_stage >= 1) return `<span class="badge">第 ${s.max_stage} 關</span>`;
+    return '<span class="badge bad">未啟動</span>';
+  }
+
+  function renderList(sessions) {
+    if (!sessions || sessions.length === 0) {
+      $list.innerHTML = '<div class="empty">還沒有對話紀錄<br/><br/>到主畫面說「開始遊戲」就會自動產生</div>';
+      return;
+    }
+    $list.innerHTML = sessions.map(s => `
+      <div class="session-card ${s.id === activeId ? 'active' : ''}" data-id="${s.id}">
+        <div class="id">${s.id}</div>
+        <div class="row">
+          ${sessionBadge(s)}
+          <span class="badge">${s.user_turns || 0} 句</span>
+          <span class="badge">${fmtDuration(s.duration_sec)}</span>
+          ${s.hint_count > 0 ? `<span class="badge warn">🆘 ${s.hint_count} 次降級</span>` : ''}
+        </div>
+      </div>
+    `).join("");
+    $list.querySelectorAll(".session-card").forEach(el => {
+      el.addEventListener("click", () => loadDetail(el.dataset.id));
+    });
+  }
+
+  function renderDetail(data) {
+    const s = data.summary || {};
+    const events = data.events || [];
+    const base = events[0]?.ts || 0;
+
+    const stat = (k, v) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+
+    const summaryHtml = `
+      <div class="summary">
+        ${stat("最高關卡", `${s.max_stage || 0} / 4`)}
+        ${stat("用時", fmtDuration(s.duration_sec))}
+        ${stat("玩家發話", `${s.user_turns || 0} 句`)}
+        ${stat("AI 回應", `${s.ai_turns || 0} 句`)}
+        ${stat("觸發降級", s.hint_count || 0)}
+      </div>
+      <div class="keywords">
+        <div class="label">本場累積命中關鍵字（${(s.unique_keywords || []).length}）</div>
+        ${(s.unique_keywords || []).map(k => `<span class="chip">${k}</span>`).join("") || '<span style="color:var(--muted);font-size:12px">（無）</span>'}
+      </div>
+    `;
+
+    const evHtml = events.map(e => {
+      const t = fmtTime(e.ts, base);
+      if (e.type === "user") {
+        const p = e.progress || {};
+        const hits = (p.hit_keywords || []).map(k => `<span class="chip" style="font-size:10px;padding:2px 8px">✓ ${k}</span>`).join("");
+        return `
+          <div class="ev user">
+            <div class="ts">+${t}</div>
+            <div class="body">
+              <div class="who">👤 玩家｜第 ${p.stage || 0} 關 · ${p.turns || 0}/${p.min_turns || 3} 輪</div>
+              <div class="bubble">${escapeHtml(e.text || "")}</div>
+              ${hits ? `<div class="progress-mini">${hits}</div>` : ""}
+            </div>
+          </div>`;
+      }
+      if (e.type === "assistant") {
+        return `
+          <div class="ev assistant">
+            <div class="ts">+${t}</div>
+            <div class="body">
+              <div class="who">🤖 蘇格拉底</div>
+              <div class="bubble">${escapeHtml(e.text || "")}</div>
+            </div>
+          </div>`;
+      }
+      if (e.type === "stage_change") {
+        return `
+          <div class="ev system">
+            <div class="ts">+${t}</div>
+            <div class="body"><div class="bubble">🎯 關卡推進：第 ${e.from_stage} → 第 ${e.to_stage} 關 · ${escapeHtml(e.stage_name || "")}</div></div>
+          </div>`;
+      }
+      if (e.type === "hint_triggered") {
+        return `
+          <div class="ev system">
+            <div class="ts">+${t}</div>
+            <div class="body"><div class="bubble">🆘 卡關 ${e.turns} 輪，系統觸發降級提示（第 ${e.stage} 關）</div></div>
+          </div>`;
+      }
+      if (e.type === "session_complete") {
+        return `
+          <div class="ev system">
+            <div class="ts">+${t}</div>
+            <div class="body"><div class="bubble" style="background:rgba(61,220,151,0.15);border-color:rgba(61,220,151,0.4);color:var(--good)">🎓 全部通關！</div></div>
+          </div>`;
+      }
+      if (e.type === "session_start") {
+        return `
+          <div class="ev system">
+            <div class="ts">+${t}</div>
+            <div class="body"><div class="bubble">▶️ Session 開始</div></div>
+          </div>`;
+      }
+      return "";
+    }).join("");
+
+    $detail.innerHTML = `
+      <h2 style="margin:0 0 4px;font-size:20px">${data.id}</h2>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:16px">
+        ${events.length} 個事件 · ${(s.stage_changes || []).length} 次關卡變化
+      </div>
+      <button class="report-toggle" id="btnReport">🎓 產生能力分析報告</button>
+      <div id="reportArea"></div>
+      ${summaryHtml}
+      <h3 style="font-size:14px;color:var(--muted);letter-spacing:1px;margin:24px 0 12px">對話時間軸</h3>
+      <div class="timeline">${evHtml}</div>
+    `;
+    document.getElementById("btnReport").addEventListener("click", () => loadReport(data.id));
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  function stars(n) {
+    let h = '<span class="stars">';
+    for (let i = 1; i <= 5; i++) {
+      h += `<span class="${i <= n ? 'on' : 'off'}">★</span>`;
+    }
+    return h + "</span>";
+  }
+
+  function renderReport(r) {
+    if (!r || !r.available) {
+      return '<div class="report"><div class="empty">⚠️ 對話資料不足以分析</div></div>';
+    }
+    const abilities = (r.abilities || []).map(a => {
+      const evid = (a.evidence || []).slice(0, 2).map(ev =>
+        `<div class="evid">📌 「${escapeHtml((ev.text || "").slice(0, 60))}」<span style="color:var(--muted)">（第 ${ev.stage} 關）</span></div>`
+      ).join("");
+      return `
+        <div class="ability">
+          <div class="name"><b>${a.code}. ${a.name}</b><span class="desc">${a.desc}</span></div>
+          <div>${stars(a.score)}</div>
+          <div class="lvl-badge ${a.level[1]}">${a.level[0]}</div>
+          <div class="rule">📊 ${a.rule}</div>
+          ${evid || ''}
+        </div>`;
+    }).join("");
+    const sug = (r.suggestions || []).map(s =>
+      `<div class="sug-item">🎯 <b>${s.ability}</b>：${s.tip}</div>`
+    ).join("") || '<div style="color:var(--muted);font-size:12px">所有能力都達標 🎉</div>';
+    const refs = (r.framework_refs || []).map(f => `<span>${f}</span>`).join("");
+
+    return `
+      <div class="report">
+        <h3>🎓 媒體素養能力報告</h3>
+        <div class="subtitle">基於對話內容的規則式評分（不依賴 LLM 主觀判斷，可重現）</div>
+        <div class="overall">
+          綜合分數
+          <span class="num">${r.overall_score}</span>
+          <span class="max">/ 5.0 ${r.completed ? '· 🎓 全部通關' : `· 進度第 ${r.max_stage} 關`}</span>
+        </div>
+        ${abilities}
+        <div class="suggestions">
+          <h4>📚 建議練習</h4>
+          ${sug}
+        </div>
+        <div class="refs">
+          評估框架依據：${refs}
+        </div>
+      </div>`;
+  }
+
+  async function loadReport(id) {
+    const $area = document.getElementById("reportArea");
+    $area.innerHTML = '<div style="color:var(--muted);padding:20px">📊 分析中…</div>';
+    try {
+      const r = await fetch(`/api/session/${encodeURIComponent(id)}/report`, { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      $area.innerHTML = renderReport(await r.json());
+    } catch (e) {
+      $area.innerHTML = '<div class="empty">分析失敗：' + e.message + '</div>';
+    }
+  }
+
+  async function loadList() {
+    try {
+      const r = await fetch("/api/sessions", { cache: "no-store" });
+      const j = await r.json();
+      renderList(j.sessions || []);
+    } catch (e) {
+      $list.innerHTML = '<div class="empty">載入失敗：' + e.message + '</div>';
+    }
+  }
+
+  async function loadDetail(id) {
+    activeId = id;
+    document.querySelectorAll(".session-card").forEach(el => {
+      el.classList.toggle("active", el.dataset.id === id);
+    });
+    $detail.innerHTML = '<div class="empty">載入中…</div>';
+    try {
+      const r = await fetch("/api/session/" + encodeURIComponent(id), { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      renderDetail(await r.json());
+    } catch (e) {
+      $detail.innerHTML = '<div class="empty">載入失敗：' + e.message + '</div>';
+    }
+  }
+
+  loadList();
+  setInterval(loadList, 5000);  // 每 5 秒刷新列表
+</script>
+</body>
+</html>

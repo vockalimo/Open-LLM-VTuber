@@ -3,6 +3,7 @@ This class is responsible for handling asynchronous interaction with OpenAI API 
 endpoints for language generation.
 """
 
+import asyncio
 from typing import AsyncIterator, List, Dict, Any
 from openai import (
     AsyncStream,
@@ -110,7 +111,21 @@ class AsyncLLM(StatelessLLMInterface):
                 f"Tool Support: {self.support_tools}, Available tools: {available_tools}"
             )
 
-            async for chunk in stream:
+            # 用 timeout 保護每個 chunk 的迭代，避免 streaming 卡住凍結 event loop
+            CHUNK_TIMEOUT = 30  # 秒
+            stream_iter = stream.__aiter__()
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        stream_iter.__anext__(), timeout=CHUNK_TIMEOUT
+                    )
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    logger.error(
+                        f"⚠️ Streaming timeout: 超過 {CHUNK_TIMEOUT} 秒未收到下一個 chunk，中斷 streaming"
+                    )
+                    break
                 # Guard against chunks with missing choices field (e.g., from OpenWebUI)
                 if not chunk.choices:
                     continue

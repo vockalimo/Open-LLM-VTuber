@@ -36,12 +36,20 @@ def read_yaml(config_path: str) -> Dict[str, Any]:
     if not content:
         raise IOError(f"Failed to read configuration file: {config_path}")
 
-    # Replace environment variables
-    pattern = re.compile(r"\$\{(\w+)\}")
+    # Replace environment variables. 支援兩種語法：
+    #   ${VAR}             → 找不到時保留原字串
+    #   ${VAR:-default}    → 找不到時用 default
+    pattern = re.compile(r"\$\{(\w+)(?::-([^}]*))?\}")
 
     def replacer(match):
         env_var = match.group(1)
-        return os.getenv(env_var, match.group(0))
+        default = match.group(2)
+        val = os.getenv(env_var)
+        if val is not None and val != "":
+            return val
+        if default is not None:
+            return default
+        return match.group(0)
 
     content = pattern.sub(replacer, content)
 

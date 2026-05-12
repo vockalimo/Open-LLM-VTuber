@@ -25,6 +25,20 @@ from ...config_manager import TTSPreprocessorConfig
 from ..input_types import BatchInput, TextSource
 from prompts import prompt_loader
 from ...mcpp.tool_manager import ToolManager
+
+# 🎮 蘇格拉底密室逃脫遊戲引擎（可選，找不到時靜默降級）
+try:
+    from game_engine import game_engine as _game_engine
+    print(f"✅ game_engine imported: {_game_engine}")
+except ImportError as e:
+    print(f"⚠️ game_engine import failed: {e}")
+    _game_engine = None
+
+# 🎮 對話紀錄器（可選）
+try:
+    from game_logger import game_logger as _game_logger
+except ImportError:
+    _game_logger = None
 from ...mcpp.json_detector import StreamJSONDetector
 from ...mcpp.types import ToolCallObject
 from ...mcpp.tool_executor import ToolExecutor
@@ -118,6 +132,37 @@ class BasicMemoryAgent(AgentInterface):
 
     def set_system(self, system: str):
         """Set the system prompt."""
+        # 🧠 vtuber-poc brain hook：用 importlib.util 直接從絕對路徑載入 bridge，
+        #   避免跟 OLV 自己的 `src` package 衝突。
+        try:
+            import importlib.util
+            import os, sys
+            from ..._device_ctx import get_active_device_id
+            _device = get_active_device_id()
+            if _device:
+                _brain_path = os.environ.get(
+                    "VTUBER_BRAIN_PATH",
+                    "/Users/vocka/Documents/lalacube/lalacube/vtuber-poc",
+                )
+                # 確保 vtuber-poc 根目錄在 path（讓 src.services.* 可被 import）
+                if _brain_path not in sys.path:
+                    sys.path.insert(0, _brain_path)
+                _bridge_file = os.path.join(_brain_path, "src", "vtuber_brain", "__init__.py")
+                spec = importlib.util.spec_from_file_location("vtuber_brain", _bridge_file)
+                _mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(_mod)
+                if _mod.is_enabled():
+                    wrapped = _mod.make_persona_system_prompt(
+                        device_id=_device,
+                        base_prompt=system,
+                    )
+                    logger.info(
+                        f"[vtuber-brain] persona injected for device={_device}"
+                    )
+                    system = wrapped
+        except Exception as _e:
+            logger.warning(f"[vtuber-brain] disabled (import failed): {_e}")
+
         logger.debug(f"Memory Agent: Setting system prompt: '''{system}'''")
 
         if self.interrupt_method == "user":
@@ -248,30 +293,43 @@ class BasicMemoryAgent(AgentInterface):
             user_content.append({"type": "text", "text": text_prompt})
 
         if input_data.images:
-            image_added = False
-            for img_data in input_data.images:
-                if isinstance(img_data.data, str) and img_data.data.startswith(
-                    "data:image"
-                ):
-                    user_content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": img_data.data, "detail": "auto"},
-                        }
-                    )
-                    image_added = True
-                else:
-                    logger.error(
-                        f"Invalid image data format: {type(img_data.data)}. Skipping image."
-                    )
-
-            if not image_added and not text_prompt:
-                logger.warning(
-                    "User input contains images but none could be processed."
+            # 🧠 vtuber-brain：若 VTUBER_BRAIN_DROP_IMAGES=1，前端送的圖不轉發給 LLM
+            #   （鏡頭僅用於本地專注偵測，不應該傳到雲端 LLM）
+            import os as _os
+            if _os.environ.get("VTUBER_BRAIN_DROP_IMAGES", "1") == "1":
+                logger.info(
+                    f"[vtuber-brain] dropped {len(input_data.images)} image(s) before LLM call"
                 )
+            else:
+                image_added = False
+                for img_data in input_data.images:
+                    if isinstance(img_data.data, str) and img_data.data.startswith(
+                        "data:image"
+                    ):
+                        user_content.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": img_data.data, "detail": "auto"},
+                            }
+                        )
+                        image_added = True
+                    else:
+                        logger.error(
+                            f"Invalid image data format: {type(img_data.data)}. Skipping image."
+                        )
+
+                if not image_added and not text_prompt:
+                    logger.warning(
+                        "User input contains images but none could be processed."
+                    )
 
         if user_content:
-            user_message = {"role": "user", "content": user_content}
+            # 🧠 若 content 只剩單一 text item，攤平成 string
+            #   （Groq 等純文字 LLM 不接受 list content）
+            if len(user_content) == 1 and user_content[0].get("type") == "text":
+                user_message = {"role": "user", "content": user_content[0]["text"]}
+            else:
+                user_message = {"role": "user", "content": user_content}
             messages.append(user_message)
 
             skip_memory = False
@@ -598,6 +656,78 @@ class BasicMemoryAgent(AgentInterface):
             self.reset_interrupt()
             self.prompt_mode_flag = False
 
+            # 🎮 遊戲引擎 hook：偵測觸發詞 / 更新關卡 / 取得本輪 system prompt
+            _effective_system = self._system
+            _deferred_ws_event = None  # 延遲送出的 WS 事件（避免 yield dict 導致 streaming hang）
+            _deferred_progress_event = None  # 延遲送出的遊戲進度事件
+            if _game_engine is not None:
+                user_text = self._to_text_prompt(input_data)
+                _prev_stage = _game_engine.stage
+                # 🎬 兩段式推進 step 2：上一輪標記了 pending_advance，
+                # 這一輪 user 又開口了，代表「恭喜過場」已經播完，
+                # 才真正推到下一關 + 排程換背景圖
+                if _game_engine.pending_advance:
+                    _game_engine.pending_advance = False
+                    _game_engine.next_stage()
+                    if _game_engine.completed:
+                        logger.info("🎮 遊戲完成（commit）")
+                        if _game_logger is not None:
+                            _game_logger.log_complete(_prev_stage)
+                    else:
+                        logger.info(f"🎮 通關（commit）→ 進入 {_game_engine.get_stage_name()}")
+                        if _game_logger is not None:
+                            _game_logger.log_stage_change(
+                                _prev_stage, _game_engine.stage, _game_engine.get_stage_name()
+                            )
+                if user_text:
+                    if not _game_engine.active:
+                        if _game_engine.check_start_trigger(user_text):
+                            _game_engine.start()
+                            logger.info(f"🎮 遊戲啟動！進入 {_game_engine.get_stage_name()}")
+                            if _game_logger is not None:
+                                _game_logger.start()
+                                _game_logger.log_stage_change(0, 1, _game_engine.get_stage_name())
+                    elif _game_engine.active:
+                        if _game_engine.check_answer(user_text):
+                            # 🎬 兩段式推進 step 1：本輪先恭喜 + 過場，
+                            # 不立刻 next_stage()，也不換背景圖。
+                            _game_engine.pending_advance = True
+                            logger.info(
+                                f"🎮 答對 stage {_game_engine.stage}！本輪先恭喜過場，下一輪才推進"
+                            )
+                if _game_engine.active or _game_engine.completed:
+                    _effective_system = _game_engine.get_system_prompt()
+                    # 🎬 若本輪是「剛通關過場」，附加恭喜+預告下一關的指令
+                    if _game_engine.pending_advance:
+                        _effective_system = _effective_system + _game_engine.get_celebration_addendum()
+                    # 🆘 卡關自動降級：附加更具體的引導（過場輪不下卡關提示）
+                    elif _game_engine.should_offer_hint():
+                        _effective_system = _effective_system + _game_engine.get_hint_addendum()
+                        logger.info(f"🆘 卡關 {_game_engine._stage_turns} 輪，注入降級提示")
+                        if _game_logger is not None:
+                            _game_logger.log_hint(_game_engine.stage, _game_engine._stage_turns)
+
+                # 📝 紀錄玩家輸入 + 當下進度快照
+                if _game_logger is not None and user_text and (_game_engine.active or _game_engine.completed):
+                    _game_logger.log_user(user_text, _game_engine.get_progress())
+
+                # 🖼️ 收集 WS event，等 streaming 結束後再 yield
+                ws_event = _game_engine.pop_ws_event()
+                if ws_event is not None:
+                    _deferred_ws_event = ws_event
+                    logger.info(f"🖼️ Deferred WS event (will yield after streaming): {ws_event}")
+                elif _game_engine.active:
+                    portrait = _game_engine.STAGE_PORTRAITS.get(_game_engine.stage)
+                    if portrait:
+                        _deferred_ws_event = {"type": "set-background", "url": portrait}
+                        logger.info(f"🖼️ Deferred re-send portrait: {_deferred_ws_event}")
+
+                # 📊 額外 emit 進度狀態給前端 HUD
+                _deferred_progress_event = {
+                    "type": "game-progress",
+                    "data": _game_engine.get_progress(),
+                }
+
             messages = self._to_messages(input_data)
             tools = None
             tool_mode = None
@@ -643,9 +773,16 @@ class BasicMemoryAgent(AgentInterface):
                 return
             else:
                 logger.info("Starting simple chat completion.")
-                token_stream = self._llm.chat_completion(messages, self._system)
+                logger.info(f"Messages count: {len(messages)}, system len: {len(_effective_system) if _effective_system else 0}")
+                logger.info(f"LLM type: {type(self._llm).__name__}")
+                token_stream = self._llm.chat_completion(messages, _effective_system)
+                logger.info("chat_completion generator created, starting iteration...")
                 complete_response = ""
+                chunk_count = 0
                 async for event in token_stream:
+                    chunk_count += 1
+                    if chunk_count == 1:
+                        logger.info(f"First chunk received! type={type(event).__name__}")
                     text_chunk = ""
                     if isinstance(event, dict) and event.get("type") == "text_delta":
                         text_chunk = event.get("text", "")
@@ -658,6 +795,21 @@ class BasicMemoryAgent(AgentInterface):
                         complete_response += text_chunk
                 if complete_response:
                     self._add_message(complete_response, "assistant")
+                    # 📝 紀錄 AI 回應（只在遊戲進行中記，避免無關對話污染 log）
+                    if (
+                        _game_logger is not None
+                        and _game_engine is not None
+                        and (_game_engine.active or _game_engine.completed)
+                    ):
+                        _game_logger.log_assistant(complete_response)
+
+                # 🖼️ Streaming 完成後再送出延遲的 WS event（避免 yield dict 在 streaming 前導致 hang）
+                if _deferred_ws_event is not None:
+                    logger.info(f"🖼️ Yielding deferred WS event: {_deferred_ws_event}")
+                    yield _deferred_ws_event
+                if _deferred_progress_event is not None:
+                    logger.info(f"📊 Yielding game-progress: {_deferred_progress_event['data']}")
+                    yield _deferred_progress_event
 
         return chat_with_memory
 
