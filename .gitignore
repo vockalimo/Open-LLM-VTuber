@@ -40,6 +40,13 @@ src/open_llm_vtuber/llm/user_credentials.json
 # Database files
 memory.db
 memory.db.bk
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Game asset source images (生成用底圖，不需進 repo)
+game_assets/**/*_base.jpg
 
 # Logs
 server.log
