@@ -1,0 +1,371 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Open-LLM-Vtuber</title>
+    <!-- 自動偵測 server URL，解決部署時 WebSocket 連到 127.0.0.1 的問題 -->
+    <script>
+      (function () {
+        var p = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var h = location.host;
+        function fix(k, v) {
+          var r = localStorage.getItem(k), ok = false;
+          if (r) {
+            try {
+              var x = JSON.parse(r);
+              if (typeof x === 'string' && x.indexOf('127.0.0.1') === -1 && x.indexOf('localhost') === -1)
+                ok = true;
+            } catch (e) {}
+          }
+          if (!ok) localStorage.setItem(k, JSON.stringify(v));
+        }
+        fix('wsUrl', p + '//' + h + '/client-ws');
+        fix('baseUrl', '');
+        if (!localStorage.getItem('i18nextLng')) localStorage.setItem('i18nextLng', JSON.stringify('zh'));
+      })();
+    </script>
+    <!-- 角色切換按鈕：先載入以攔截 WebSocket（必須在 main bundle 之前）-->
+    <script src="./character-switch.js"></script>
+    <script type="module" crossorigin src="./assets/main-nu7uwxNJ.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/main-QEkl09-0.css">
+    <style>
+      /* ── 遊戲模式：凍結真實背景 img，用 #real-bg 顯示 ── */
+      #root {
+        position: relative;
+        z-index: 1;
+      }
+      img[alt="background"].game-frozen {
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      #real-bg {
+        display: none;
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        z-index: 0;
+        pointer-events: none;
+      }
+      #real-bg.active { display: block; }
+      #game-card {
+        display: none;
+        position: fixed;
+        right: 24px;
+        bottom: 140px;
+        width: 200px;
+        z-index: 200;
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 8px 36px rgba(0, 0, 0, 0.75);
+        border: 1.5px solid rgba(255, 255, 255, 0.18);
+        background: #12121e;
+        /* 拖曳用 */
+        touch-action: none;
+        user-select: none;
+        transition: box-shadow 0.2s;
+      }
+      #game-card.dragging {
+        box-shadow: 0 12px 48px rgba(120, 80, 255, 0.45);
+        opacity: 0.92;
+      }
+      #game-card.visible {
+        display: block;
+        animation: gameCardIn 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      }
+      #game-card .gc-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 11px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.6px;
+        color: rgba(255, 255, 255, 0.88);
+        background: linear-gradient(90deg, rgba(80,40,160,0.85), rgba(30,20,60,0.85));
+        backdrop-filter: blur(6px);
+        text-transform: uppercase;
+        cursor: grab;
+      }
+      #game-card .gc-header:active { cursor: grabbing; }
+      #game-card .gc-header .gc-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #a78bfa;
+        box-shadow: 0 0 6px #a78bfa;
+        flex-shrink: 0;
+      }
+      #game-card .gc-portrait {
+        width: 100%;
+        height: 250px;
+        object-fit: cover;
+        display: block;
+      }
+      #game-card .gc-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 11px;
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.45);
+        background: rgba(0, 0, 0, 0.5);
+        letter-spacing: 0.3px;
+      }
+      #game-card .gc-zoom {
+        display: flex;
+        gap: 2px;
+      }
+      #game-card .gc-zoom button {
+        width: 22px;
+        height: 22px;
+        border: none;
+        border-radius: 5px;
+        background: rgba(255,255,255,0.08);
+        color: rgba(255,255,255,0.6);
+        font-size: 14px;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s;
+      }
+      #game-card .gc-zoom button:hover {
+        background: rgba(255,255,255,0.18);
+        color: #fff;
+      }
+
+      @keyframes gameCardIn {
+        from { opacity: 0; transform: translateX(48px) scale(0.92); }
+        to   { opacity: 1; transform: translateX(0)    scale(1);    }
+      }
+      #btn-clear-cache {
+        position: fixed;
+        left: 12px;
+        bottom: 12px;
+        z-index: 99999;
+        padding: 6px 12px;
+        border: none;
+        border-radius: 6px;
+        background: rgba(0,0,0,0.55);
+        color: #fff;
+        font-size: 12px;
+        cursor: pointer;
+        opacity: 0.5;
+        transition: opacity 0.2s;
+      }
+      #btn-clear-cache:hover { opacity: 1; }
+      #btn-start-game {
+        position: fixed;
+        left: 100px;
+        bottom: 12px;
+        z-index: 99999;
+        padding: 6px 12px;
+        border: none;
+        border-radius: 6px;
+        background: rgba(80,0,160,0.65);
+        color: #fff;
+        font-size: 12px;
+        cursor: pointer;
+        opacity: 0.5;
+        transition: opacity 0.2s;
+      }
+      #btn-start-game:hover { opacity: 1; }
+    </style>
+  </head>
+
+  <body>
+    <div id="root"></div>
+
+    <!-- 遊戲模式時的「凍結」背景（複製真實背景圖，不受 Vue 控制） -->
+    <img id="real-bg" src="" alt="real-background">
+
+    <!-- 強制清除快取按鈕 -->
+    <button id="btn-clear-cache" title="清除快取並重新載入">🔄 清快取</button>
+    <button id="btn-start-game" title="啟動密室逃脫遊戲">🎮 開始遊戲</button>
+
+    <!-- 遊戲人物卡片 -->
+    <div id="game-card">
+      <div class="gc-header">
+        <span class="gc-dot"></span>
+        <span id="gc-title">密室逃脫</span>
+      </div>
+      <img class="gc-portrait" src="" alt="game-portrait">
+      <div class="gc-footer">
+        <span>判讀影像真偽，找出逃脫之路</span>
+        <span class="gc-zoom">
+          <button id="gc-zoom-out" title="縮小">−</button>
+          <button id="gc-zoom-in" title="放大">+</button>
+        </span>
+      </div>
+    </div>
+
+    <script>
+      // 強制清快取按鈕
+      document.getElementById('btn-clear-cache').addEventListener('click', async () => {
+        // 只清除背景相關的 localStorage，保留 app 設定（語言、聊天、音訊）
+        localStorage.removeItem('backgroundUrl');
+        // 清 Service Worker caches
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map(k => caches.delete(k)));
+        }
+        // 帶時間戳重載，強制繞過瀏覽器快取
+        window.location.href = '/?_t=' + Date.now();
+      });
+
+      // 🎮 開始遊戲按鈕：自動輸入觸發詞並送出
+      document.getElementById('btn-start-game').addEventListener('click', () => {
+        const input = document.querySelector('textarea[placeholder*="消息"], input[placeholder*="消息"]');
+        if (!input) return alert('找不到輸入框，請先連線');
+        input.focus();
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+          window.HTMLTextAreaElement.prototype, 'value'
+        )?.set || Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype, 'value'
+        )?.set;
+        if (nativeSetter) nativeSetter.call(input, '開始遊戲');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        setTimeout(() => {
+          const enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true };
+          input.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+          input.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+          input.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
+        }, 150);
+      });
+
+      // 頁面載入時清除 localStorage 中的遊戲圖片背景，避免重新整理後誤顯示遊戲卡片
+      (function () {
+        try {
+          const raw = localStorage.getItem('backgroundUrl');
+          if (raw) {
+            const url = JSON.parse(raw);
+            if (url && (url.includes('/game/') || url.includes('game-face'))) {
+              localStorage.removeItem('backgroundUrl');
+            }
+          }
+        } catch (e) {}
+      })();
+
+      (function () {
+        const card     = document.getElementById('game-card');
+        const portrait = card.querySelector('.gc-portrait');
+        const realBg   = document.getElementById('real-bg');
+
+        /* ── 拖曳功能（只能從 header 開始拖） ── */
+        const header = card.querySelector('.gc-header');
+        let isDragging = false, startX, startY, origLeft, origTop;
+
+        function toAbsolutePos() {
+          /* 第一次拖曳時把 right/bottom 轉成 left/top */
+          if (card.style.left) return;
+          const r = card.getBoundingClientRect();
+          card.style.left = r.left + 'px';
+          card.style.top  = r.top  + 'px';
+          card.style.right  = 'auto';
+          card.style.bottom = 'auto';
+        }
+
+        header.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0) return;
+          toAbsolutePos();
+          isDragging = true;
+          startX = e.clientX; startY = e.clientY;
+          origLeft = parseInt(card.style.left); origTop = parseInt(card.style.top);
+          card.classList.add('dragging');
+          header.setPointerCapture(e.pointerId);
+          e.preventDefault();
+        });
+        header.addEventListener('pointermove', (e) => {
+          if (!isDragging) return;
+          const dx = e.clientX - startX, dy = e.clientY - startY;
+          card.style.left = Math.max(0, Math.min(window.innerWidth  - card.offsetWidth,  origLeft + dx)) + 'px';
+          card.style.top  = Math.max(0, Math.min(window.innerHeight - card.offsetHeight, origTop  + dy)) + 'px';
+        });
+        header.addEventListener('pointerup', () => {
+          isDragging = false;
+          card.classList.remove('dragging');
+        });
+
+        /* ── 縮放功能 ── */
+        const MIN_W = 140, MAX_W = 500, STEP = 40;
+        function resizeCard(delta) {
+          toAbsolutePos();
+          const oldW = card.offsetWidth;
+          const newW = Math.max(MIN_W, Math.min(MAX_W, oldW + delta));
+          const ratio = newW / oldW;
+          card.style.width = newW + 'px';
+          portrait.style.height = Math.round(250 * (newW / 200)) + 'px';
+          /* 微調位置讓縮放以中心為軸 */
+          const curLeft = parseInt(card.style.left) || 0;
+          card.style.left = Math.max(0, curLeft - (newW - oldW) / 2) + 'px';
+        }
+        document.getElementById('gc-zoom-in').addEventListener('click',  () => resizeCard(STEP));
+        document.getElementById('gc-zoom-out').addEventListener('click', () => resizeCard(-STEP));
+        /* 滾輪縮放（在 card 上滾） */
+        card.addEventListener('wheel', (e) => {
+          e.preventDefault();
+          resizeCard(e.deltaY < 0 ? STEP : -STEP);
+        }, { passive: false });
+
+        function isGameFace(url) { return url && (url.includes('/game/stage') || url.includes('game-face')); }
+
+        /* src 變化時的處理 */
+        function onSrcChange(bgImg, newSrc) {
+          if (isGameFace(newSrc)) {
+            // 遊戲模式：凍結 Vue 的 img（隱藏），用 #real-bg 顯示上一張背景
+            // 只有在已有真實背景時才凍結，否則讓 game-face 繼續當背景
+            if (realBg.src && realBg.src !== location.href) {
+              bgImg.classList.add('game-frozen');
+              realBg.classList.add('active');
+            }
+            // 顯示人臉 card
+            portrait.src = newSrc;
+            card.classList.add('visible');
+          } else {
+            // 普通背景：同步到 #real-bg，並解除凍結
+            if (newSrc) realBg.src = newSrc;
+            bgImg.classList.remove('game-frozen');
+            realBg.classList.remove('active');
+            card.classList.remove('visible');
+          }
+        }
+
+        const attrObserver = new MutationObserver((muts) => {
+          for (const m of muts) {
+            if (m.attributeName === 'src') onSrcChange(m.target, m.target.src);
+          }
+        });
+
+        function attachTo(bgImg) {
+          if (bgImg._gcAttached) return;
+          bgImg._gcAttached = true;
+          // 初始背景：若已是 game-face 則直接進入遊戲模式
+          if (isGameFace(bgImg.src)) {
+            onSrcChange(bgImg, bgImg.src);
+          } else if (bgImg.src) {
+            realBg.src = bgImg.src;
+          }
+          attrObserver.observe(bgImg, { attributes: true, attributeFilter: ['src'] });
+        }
+
+        const domObserver = new MutationObserver(() => {
+          const bgImg = document.querySelector('img[alt="background"]');
+          if (bgImg) attachTo(bgImg);
+        });
+        domObserver.observe(document.body, { childList: true, subtree: true });
+
+        const existing = document.querySelector('img[alt="background"]');
+        if (existing) attachTo(existing);
+      })();
+    </script>
+
+    <!-- � 學生登入：第一次來必填學號 -->
+    <script src="./student-auth.js"></script>
+    <!-- �👀 專心度偵測（webcam → MediaPipe → /api/attention/engagement）
+         預設不啟動。在 console 執行 window.attentionTracker.start()，或 URL 加 ?attention=1 -->
+    <script type="module" src="./attention.js"></script>
+  </body>
+</html>

@@ -34,29 +34,57 @@ RUN uv pip install --no-deps .
 
 # 修補 frontend，讓部署在 reverse proxy 後面時 URL 正確
 # 策略：
-#   - DEFAULT_BASE_URL="" → 背景圖用相對路徑，local & GCP 都能跑
+#   - frontend-overlay/ 覆蓋 submodule 的自訂檔案（含遊戲 UI、character-switch 等）
+#   - index.html 裡的 main-*.js script tag hash 動態替換成實際檔名
+#   - DEFAULT_BASE_URL="" → 背景圖用相對路徑
 #   - DEFAULT_WS_URL → 根據 location.protocol/host 動態決定
-#   - i18nextLng 預設 zh
-#   - index.html 注入 localStorage 覆寫腳本（應對舊快取）
 RUN python3 - <<'PYEOF'
-import glob
+import glob, re, shutil, os
 
-# 1. 修補 compiled JS bundle（用 glob 找，不依賴 content hash 檔名）
-matches = glob.glob("/app/frontend/assets/main-*.js")
-js_path = matches[0] if matches else None
+# 1. 覆蓋 submodule 的自訂 frontend 檔案（index.html / character-switch.js 等）
+overlay_dir = "/app/frontend-overlay"
+frontend_dir = "/app/frontend"
+if os.path.isdir(overlay_dir):
+    for fname in os.listdir(overlay_dir):
+        src = os.path.join(overlay_dir, fname)
+        dst = os.path.join(frontend_dir, fname)
+        shutil.copy2(src, dst)
+        print(f"✅ overlay: {fname}")
+else:
+    print("WARNING: frontend-overlay/ not found, skipping overlay")
+
+# 2. 修正 index.html 裡的 main-*.js script tag（hash 可能與 overlay 存的不同）
+html_path = "/app/frontend/index.html"
+try:
+    html = open(html_path, encoding="utf-8").read()
+    js_matches = glob.glob("/app/frontend/assets/main-*.js")
+    if js_matches:
+        actual_js = os.path.basename(js_matches[0])
+        html_new = re.sub(r'main-[^"\']+\.js', actual_js, html)
+        if html_new != html:
+            open(html_path, "w", encoding="utf-8").write(html_new)
+            print(f"✅ index.html JS hash updated → {actual_js}")
+        else:
+            print(f"index.html JS hash already correct ({actual_js})")
+    else:
+        print("WARNING: no main-*.js found in /app/frontend/assets/")
+except FileNotFoundError as e:
+    print(f"WARNING: {e}")
+
+# 3. 修補 compiled JS bundle（DEFAULT_BASE_URL / DEFAULT_WS_URL）
+js_matches = glob.glob("/app/frontend/assets/main-*.js")
+js_path = js_matches[0] if js_matches else None
 try:
     if not js_path:
         raise FileNotFoundError("no main-*.js found in /app/frontend/assets/")
     js = open(js_path, encoding="utf-8").read()
     changed = False
 
-    # DEFAULT_BASE_URL="" → 背景圖改為相對路徑
     old_base = 'DEFAULT_BASE_URL="http://127.0.0.1:12393"'
     if old_base in js:
         js = js.replace(old_base, 'DEFAULT_BASE_URL=""')
         changed = True
 
-    # DEFAULT_WS_URL → 動態偵測 host
     old_ws = 'DEFAULT_WS_URL="ws://127.0.0.1:12393/client-ws"'
     new_ws = 'DEFAULT_WS_URL=(location.protocol==="https:"?"wss:":"ws:")+"//"+location.host+"/client-ws"'
     if old_ws in js:
@@ -65,37 +93,11 @@ try:
 
     if changed:
         open(js_path, "w", encoding="utf-8").write(js)
-        print("main.js patched OK")
+        print("✅ main.js patched OK")
     else:
         print("main.js already patched or pattern not found")
 except FileNotFoundError as e:
     print(f"WARNING: {e}, skipping JS patch")
-
-# 2. 注入 localStorage 修正腳本到 index.html（處理舊值快取）
-html_path = "/app/frontend/index.html"
-try:
-    html = open(html_path, encoding="utf-8").read()
-    inject = (
-        '    <script>(function(){'
-        'var p=location.protocol==="https:"?"wss:":"ws:",h=location.host;'
-        'function fix(k,v){var r=localStorage.getItem(k),ok=false;'
-        'if(r){try{var x=JSON.parse(r);'
-        'if(typeof x==="string"&&x.indexOf("127.0.0.1")===-1&&x.indexOf("localhost")===-1)ok=true;'
-        '}catch(e){}}if(!ok)localStorage.setItem(k,JSON.stringify(v));}'
-        'fix("wsUrl",p+"//"+h+"/client-ws");'
-        'fix("baseUrl","");'  # 空字串 → 相對路徑
-        'if(!localStorage.getItem("i18nextLng"))localStorage.setItem("i18nextLng","zh");'
-        '})();</script>\n'
-    )
-    marker = '    <script type="module" crossorigin'
-    if "localStorage.setItem" not in html:
-        html = html.replace(marker, inject + marker)
-        open(html_path, "w", encoding="utf-8").write(html)
-        print("index.html patched OK")
-    else:
-        print("index.html already patched")
-except FileNotFoundError:
-    print(f"WARNING: {html_path} not found, skipping index.html patch")
 PYEOF
 
 # 補裝 host venv 有、但沒進 uv.lock 的套件
