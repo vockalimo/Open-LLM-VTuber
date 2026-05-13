@@ -91,6 +91,16 @@ try:
         js = js.replace(old_ws, new_ws)
         changed = True
 
+    # data:audio/wav → Blob URL（相容 iOS Safari）
+    old_audio = '`data:audio/wav;base64,${dt}`'
+    new_audio = '(()=>{try{const b=atob(dt),ab=new ArrayBuffer(b.length),v=new Uint8Array(ab);for(let i=0;i<b.length;i++)v[i]=b.charCodeAt(i);return URL.createObjectURL(new Blob([ab],{type:"audio/wav"}))}catch(e){return`data:audio/wav;base64,${dt}`}})()'
+    if old_audio in js:
+        js = js.replace(old_audio, new_audio)
+        changed = True
+        print("✅ audio data URI → Blob URL patch applied")
+    else:
+        print("WARNING: audio data URI pattern not found, skipping Blob URL patch")
+
     if changed:
         open(js_path, "w", encoding="utf-8").write(js)
         print("✅ main.js patched OK")
