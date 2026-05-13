@@ -39,15 +39,14 @@ RUN uv pip install --no-deps .
 #   - i18nextLng 預設 zh
 #   - index.html 注入 localStorage 覆寫腳本（應對舊快取）
 RUN python3 - <<'PYEOF'
-import re
+import glob
 
 # 1. 修補 compiled JS bundle（用 glob 找，不依賴 content hash 檔名）
-import glob
 matches = glob.glob("/app/frontend/assets/main-*.js")
 js_path = matches[0] if matches else None
 try:
     if not js_path:
-        raise FileNotFoundError("no main-*.js found")
+        raise FileNotFoundError("no main-*.js found in /app/frontend/assets/")
     js = open(js_path, encoding="utf-8").read()
     changed = False
 
@@ -69,8 +68,8 @@ try:
         print("main.js patched OK")
     else:
         print("main.js already patched or pattern not found")
-except FileNotFoundError:
-    print(f"WARNING: {js_path} not found, skipping JS patch")
+except FileNotFoundError as e:
+    print(f"WARNING: {e}, skipping JS patch")
 
 # 2. 注入 localStorage 修正腳本到 index.html（處理舊值快取）
 html_path = "/app/frontend/index.html"
