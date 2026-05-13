@@ -9,10 +9,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-# Base dependencies
+# Base dependencies（含 gcloud CLI，讓 startup 可從 GCS 拉圖片）
 RUN apt-get update -o Acquire::Retries=5 \
  && apt-get install -y --no-install-recommends \
-      ffmpeg git curl ca-certificates \
+      ffmpeg git curl ca-certificates gnupg \
+ && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
+ && echo 'deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main' \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list \
+ && apt-get update -o Acquire::Retries=5 \
+ && apt-get install -y --no-install-recommends google-cloud-cli \
  && rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -133,12 +139,23 @@ RUN printf '%s\n' \
   '  rm -rf /app/avatars && ln -s /app/conf/avatars /app/avatars' \
   'fi' \
   '' \
-  '# 6) backgrounds' \
+  '# 6) backgrounds：優先用掛載目錄，否則從 GCS 拉' \
   'if [ -d "/app/conf/backgrounds" ]; then' \
   '  rm -rf /app/backgrounds && ln -s /app/conf/backgrounds /app/backgrounds' \
+  'elif [ ! -d "/app/backgrounds" ] || [ -z "$(ls -A /app/backgrounds 2>/dev/null)" ]; then' \
+  '  echo "⬇️  從 GCS 拉 backgrounds..."' \
+  '  gsutil -m cp -r gs://lalacube-assets/vtuber/backgrounds /app/ 2>/dev/null || echo "⚠️  GCS 拉取失敗，繼續啟動"' \
   'fi' \
   '' \
-  '# 7) start app' \
+  '# 7) game_assets：優先用掛載目錄，否則從 GCS 拉' \
+  'if [ -d "/app/conf/game_assets" ]; then' \
+  '  rm -rf /app/game_assets && ln -s /app/conf/game_assets /app/game_assets' \
+  'elif [ ! -d "/app/game_assets" ] || [ -z "$(ls -A /app/game_assets 2>/dev/null)" ]; then' \
+  '  echo "⬇️  從 GCS 拉 game_assets..."' \
+  '  gsutil -m cp -r gs://lalacube-assets/vtuber/game_assets /app/ 2>/dev/null || echo "⚠️  GCS 拉取失敗，繼續啟動"' \
+  'fi' \
+  '' \
+  '# 8) start app' \
   'exec uv run run_server.py' \
   > /usr/local/bin/start-app && chmod +x /usr/local/bin/start-app
 
