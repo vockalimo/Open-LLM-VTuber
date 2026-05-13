@@ -105,7 +105,12 @@ async def process_single_conversation(
                 ):
                     # 🎮 遊戲引擎事件：直接透過 WebSocket 送給前端
                     logger.info(f"🖼️ Sending game WS event to frontend: {output_item}")
-                    await websocket_send(json.dumps(output_item))
+                    try:
+                        await websocket_send(json.dumps(output_item))
+                    except Exception as ws_err:
+                        logger.warning(f"⚠️ Could not send game event (WS may be closed): {ws_err}")
+                        # WS 已關閉，不繼續處理此 conversation
+                        return full_response
 
                 elif isinstance(output_item, (SentenceOutput, AudioOutput)):
                     # Handle SentenceOutput or AudioOutput
