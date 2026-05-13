@@ -152,6 +152,96 @@ Thanks our contributors and maintainers for making this project possible.
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Open-LLM-VTuber/open-llm-vtuber&type=Date)](https://star-history.com/#Open-LLM-VTuber/open-llm-vtuber&Date)
 
+---
+
+## 🛠️ Lalacube 部署維護說明
+
+> 本節僅適用於 `vockalimo/Open-LLM-VTuber` fork，記錄 lalacube 自訂部署的注意事項。
+
+### 架構概覽
+
+```
+frontend/               ← git submodule（唯讀，指向 Open-LLM-VTuber-Web build branch）
+frontend-overlay/       ← lalacube 自訂 UI（這裡改，不要動 submodule）
+  ├── index.html        ← 自訂首頁（遊戲按鈕、角色切換、學生登入、繁中語言設定）
+  ├── character-switch.js
+  ├── attention.js
+  └── student-auth.js
+dockerfile              ← build 時將 frontend-overlay/ 複製覆蓋 frontend/
+```
+
+Docker build 流程：
+1. `git submodule update --init --recursive` → 取出 `frontend/`（pinned commit）
+2. `frontend-overlay/` 的檔案複製蓋過 `frontend/`
+3. 修補 `main-*.js`：`DEFAULT_BASE_URL` 改為 `""`，`DEFAULT_WS_URL` 改為相對 host
+4. **assert 驗證**：若 `127.0.0.1` 仍存在於 JS bundle → build 立即失敗（上游改了變數名，需手動更新 patch）
+
+### 修改前端 UI
+
+**不要直接修改 `frontend/`（submodule，改了不會進 git）**
+
+正確做法：
+```bash
+# 修改 frontend-overlay/ 裡的檔案
+vim frontend-overlay/index.html
+
+# commit & push
+git add frontend-overlay/
+git commit -m "feat: ..."
+git push lalacube main
+# → CI 自動部署
+```
+
+### 升級 frontend submodule
+
+submodule 目前 pinned 到 `06a659b`（build branch），**不要隨意升級**。
+升級前務必先確認上游 JS bundle 的變數名稱沒有改變（否則 assert 會在 build 時報錯）。
+
+```bash
+# 1. 確認新版本的 main-*.js 仍有 DEFAULT_BASE_URL / DEFAULT_WS_URL
+# 2. 升級 pointer
+git -C frontend fetch
+git -C frontend checkout <新 commit hash>
+git add frontend
+git commit -m "chore: upgrade frontend submodule to <hash>"
+git push lalacube main
+
+# 3. 觀察 CI build log：
+#    ✅ main.js patched OK
+#    ✅ patch verification passed (no 127.0.0.1 in JS)
+#    → 表示 patch 成功
+#
+#    PATCH FAILED: 127.0.0.1 still in main-*.js
+#    → 上游改了變數名，需更新 dockerfile 裡的 patch strings
+```
+
+### GCS 靜態資產
+
+背景圖和遊戲素材存放於 `gs://lalacube-assets`（公開讀取），build 時自動下載：
+- `vtuber/backgrounds/` → `/app/backgrounds/`
+- `vtuber/game_assets/` → `/app/game_assets/`
+
+上傳新素材：
+```bash
+gsutil cp my-bg.jpg gs://lalacube-assets/vtuber/backgrounds/
+# 重新 build image 後自動生效
+```
+
+### 部署 CI/CD
+
+- Repository: `vockalimo/Open-LLM-VTuber`（Open-LLM-VTuber 本體）
+- CI/CD: `AIShopping` repo 的 `.github/workflows/deploy.yml`，push 到 `vockalimo/Open-LLM-VTuber` 後在 AIShopping 手動觸發（`gh workflow run deploy.yml -f services=vtuber`）或由路徑過濾自動觸發
+- GCP VM: `aishopping-meili`，`asia-east1-a`
+
+### vtuber-conf 設定（AIShopping repo）
+
+VAD 靈敏度設定位於 `AIShopping/vtuber-conf/conf.yaml`：
+```yaml
+prob_threshold: 0.3    # 降低 → 更容易觸發（預設 0.4）
+db_threshold: 50       # 降低 → 更容易觸發（預設 60）
+required_hits: 2       # 降低 → 更容易觸發（預設 3）
+```
+
 
 
 
