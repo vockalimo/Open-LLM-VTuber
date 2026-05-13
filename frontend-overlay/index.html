@@ -21,7 +21,11 @@
         }
         fix('wsUrl', p + '//' + h + '/client-ws');
         fix('baseUrl', '');
-        if (!localStorage.getItem('i18nextLng')) localStorage.setItem('i18nextLng', JSON.stringify('zh'));
+        // 強制設中文（不帶 JSON.stringify，覆蓋任何英文 / 未設定的情況）
+        var lng = localStorage.getItem('i18nextLng');
+        if (!lng || lng === '"en"' || lng === 'en' || lng === 'English' || lng === '"English"') {
+          localStorage.setItem('i18nextLng', 'zh');
+        }
       })();
     </script>
     <!-- 角色切換按鈕：先載入以攔截 WebSocket（必須在 main bundle 之前）-->
@@ -310,7 +314,8 @@
           resizeCard(e.deltaY < 0 ? STEP : -STEP);
         }, { passive: false });
 
-        function isGameFace(url) { return url && (url.includes('/game/stage') || url.includes('game-face')); }
+        // 遊戲圖（stage 人臉、escape room 線索圖）都在 #game-card 顯示
+        function isGameFace(url) { return url && (url.includes('/game/stage') || url.includes('game-face') || url.includes('/game/escape/')); }
 
         /* src 變化時的處理 */
         function onSrcChange(bgImg, newSrc) {
