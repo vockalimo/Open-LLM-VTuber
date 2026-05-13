@@ -96,6 +96,15 @@ try:
         print("✅ main.js patched OK")
     else:
         print("main.js already patched or pattern not found")
+
+    # 驗證 patch 有效：若 127.0.0.1 還在，表示上游改了變數名，build 應失敗
+    final_js = open(js_path, encoding="utf-8").read()
+    assert "127.0.0.1" not in final_js, (
+        f"PATCH FAILED: 127.0.0.1 still in {js_path} — "
+        "upstream may have renamed DEFAULT_WS_URL or DEFAULT_BASE_URL. "
+        "Update the patch strings in dockerfile."
+    )
+    print("✅ patch verification passed (no 127.0.0.1 in JS)")
 except FileNotFoundError as e:
     print(f"WARNING: {e}, skipping JS patch")
 PYEOF
