@@ -41,9 +41,13 @@ RUN uv pip install --no-deps .
 RUN python3 - <<'PYEOF'
 import re
 
-# 1. 修補 compiled JS bundle
-js_path = "/app/frontend/assets/main-nu7uwxNJ.js"
+# 1. 修補 compiled JS bundle（用 glob 找，不依賴 content hash 檔名）
+import glob
+matches = glob.glob("/app/frontend/assets/main-*.js")
+js_path = matches[0] if matches else None
 try:
+    if not js_path:
+        raise FileNotFoundError("no main-*.js found")
     js = open(js_path, encoding="utf-8").read()
     changed = False
 
