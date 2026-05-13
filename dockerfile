@@ -70,26 +70,29 @@ except FileNotFoundError:
 
 # 2. 注入 localStorage 修正腳本到 index.html（處理舊值快取）
 html_path = "/app/frontend/index.html"
-html = open(html_path, encoding="utf-8").read()
-inject = (
-    '    <script>(function(){'
-    'var p=location.protocol==="https:"?"wss:":"ws:",h=location.host;'
-    'function fix(k,v){var r=localStorage.getItem(k),ok=false;'
-    'if(r){try{var x=JSON.parse(r);'
-    'if(typeof x==="string"&&x.indexOf("127.0.0.1")===-1&&x.indexOf("localhost")===-1)ok=true;'
-    '}catch(e){}}if(!ok)localStorage.setItem(k,JSON.stringify(v));}'
-    'fix("wsUrl",p+"//"+h+"/client-ws");'
-    'fix("baseUrl","");'  # 空字串 → 相對路徑
-    'if(!localStorage.getItem("i18nextLng"))localStorage.setItem("i18nextLng","zh");'
-    '})();</script>\n'
-)
-marker = '    <script type="module" crossorigin'
-if "localStorage.setItem" not in html:
-    html = html.replace(marker, inject + marker)
-    open(html_path, "w", encoding="utf-8").write(html)
-    print("index.html patched OK")
-else:
-    print("index.html already patched")
+try:
+    html = open(html_path, encoding="utf-8").read()
+    inject = (
+        '    <script>(function(){'
+        'var p=location.protocol==="https:"?"wss:":"ws:",h=location.host;'
+        'function fix(k,v){var r=localStorage.getItem(k),ok=false;'
+        'if(r){try{var x=JSON.parse(r);'
+        'if(typeof x==="string"&&x.indexOf("127.0.0.1")===-1&&x.indexOf("localhost")===-1)ok=true;'
+        '}catch(e){}}if(!ok)localStorage.setItem(k,JSON.stringify(v));}'
+        'fix("wsUrl",p+"//"+h+"/client-ws");'
+        'fix("baseUrl","");'  # 空字串 → 相對路徑
+        'if(!localStorage.getItem("i18nextLng"))localStorage.setItem("i18nextLng","zh");'
+        '})();</script>\n'
+    )
+    marker = '    <script type="module" crossorigin'
+    if "localStorage.setItem" not in html:
+        html = html.replace(marker, inject + marker)
+        open(html_path, "w", encoding="utf-8").write(html)
+        print("index.html patched OK")
+    else:
+        print("index.html already patched")
+except FileNotFoundError:
+    print(f"WARNING: {html_path} not found, skipping index.html patch")
 PYEOF
 
 # 補裝 host venv 有、但沒進 uv.lock 的套件
