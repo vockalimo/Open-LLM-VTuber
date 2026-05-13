@@ -9,16 +9,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-# Base dependencies（含 gcloud CLI，讓 startup 可從 GCS 拉圖片）
+# Base dependencies
 RUN apt-get update -o Acquire::Retries=5 \
  && apt-get install -y --no-install-recommends \
-      ffmpeg git curl ca-certificates gnupg \
- && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
- && echo 'deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main' \
-    > /etc/apt/sources.list.d/google-cloud-sdk.list \
- && apt-get update -o Acquire::Retries=5 \
- && apt-get install -y --no-install-recommends google-cloud-cli \
+      ffmpeg git curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -101,6 +95,31 @@ PYEOF
 # 補裝 host venv 有、但沒進 uv.lock 的套件
 RUN uv pip install silero-vad
 
+# 下載靜態資源（backgrounds + game_assets）—— 公開 GCS bucket，不需驗證
+# 在 build 階段下載而非 startup，消除冷啟動延遲
+RUN python3 - <<'PYEOF'
+import urllib.request, json, os
+
+BASE   = "https://storage.googleapis.com"
+BUCKET = "lalacube-assets"
+
+for prefix in ["vtuber/backgrounds/", "vtuber/game_assets/"]:
+    try:
+        list_url = f"{BASE}/storage/v1/b/{BUCKET}/o?prefix={prefix}&fields=items(name)"
+        with urllib.request.urlopen(list_url, timeout=30) as resp:
+            items = json.load(resp).get("items", [])
+        for item in items:
+            name = item["name"]           # "vtuber/backgrounds/foo.jpeg"
+            rel  = name[len("vtuber/"):]  # "backgrounds/foo.jpeg"
+            dest = f"/app/{rel}"
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            print(f"⬇️  {name}")
+            urllib.request.urlretrieve(f"{BASE}/{BUCKET}/{name}", dest)
+        print(f"✅  {prefix} 下載完成（{len(items)} 個）")
+    except Exception as e:
+        print(f"⚠️  下載 {prefix} 失敗（{e}），build 繼續")
+PYEOF
+
 # Startup script
 RUN printf '%s\n' \
   '#!/usr/bin/env sh' \
@@ -139,20 +158,14 @@ RUN printf '%s\n' \
   '  rm -rf /app/avatars && ln -s /app/conf/avatars /app/avatars' \
   'fi' \
   '' \
-  '# 6) backgrounds：優先用掛載目錄，否則從 GCS 拉' \
+  '# 6) backgrounds（若掛載了外部目錄則覆蓋 image 內建資源）' \
   'if [ -d "/app/conf/backgrounds" ]; then' \
   '  rm -rf /app/backgrounds && ln -s /app/conf/backgrounds /app/backgrounds' \
-  'elif [ ! -d "/app/backgrounds" ] || [ -z "$(ls -A /app/backgrounds 2>/dev/null)" ]; then' \
-  '  echo "⬇️  從 GCS 拉 backgrounds..."' \
-  '  gsutil -m cp -r gs://lalacube-assets/vtuber/backgrounds /app/ 2>/dev/null || echo "⚠️  GCS 拉取失敗，繼續啟動"' \
   'fi' \
   '' \
-  '# 7) game_assets：優先用掛載目錄，否則從 GCS 拉' \
+  '# 7) game_assets（若掛載了外部目錄則覆蓋 image 內建資源）' \
   'if [ -d "/app/conf/game_assets" ]; then' \
   '  rm -rf /app/game_assets && ln -s /app/conf/game_assets /app/game_assets' \
-  'elif [ ! -d "/app/game_assets" ] || [ -z "$(ls -A /app/game_assets 2>/dev/null)" ]; then' \
-  '  echo "⬇️  從 GCS 拉 game_assets..."' \
-  '  gsutil -m cp -r gs://lalacube-assets/vtuber/game_assets /app/ 2>/dev/null || echo "⚠️  GCS 拉取失敗，繼續啟動"' \
   'fi' \
   '' \
   '# 8) start app' \
