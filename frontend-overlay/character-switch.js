@@ -24,6 +24,11 @@
           if (m.type === "config-files") onConfigList(m.configs || []);
           if (m.type === "config-switched" || m.type === "set-model-and-conf")
             onSwitched(m);
+          if (m.type === "set-background" && m.url) {
+            // OLV 主 bundle 不認識此 type，由 overlay 直接設定背景圖 src
+            const bgImg = document.querySelector('img[alt="background"]');
+            if (bgImg) bgImg.src = m.url;
+          }
         } catch (_) {}
       });
       ws.addEventListener("open", () => {
